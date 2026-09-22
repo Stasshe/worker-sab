@@ -1,14 +1,16 @@
 import { configurations, IMAGE_HEIGHT, IMAGE_WIDTH, renderRow } from "./fractal.js";
-import { drawParticles, PARTICLE_COUNT } from "./particles.js";
 import "./style.css";
 import { createWasmRenderer } from "./wasm.js";
 
 const workerUrl = new URL("./worker.js", import.meta.url);
-const transferWorkerUrl = new URL("./particle-transfer.worker.js", import.meta.url);
-const sabWorkerUrl = new URL("./particle-sab.worker.js", import.meta.url);
+const messageTileWorkerUrl = new URL("./tile-message.worker.js", import.meta.url);
+const sabTileWorkerUrl = new URL("./tile-sab.worker.js", import.meta.url);
 const coreCount = navigator.hardwareConcurrency || 4;
 const workerCount = Math.max(1, Math.min(coreCount - 1, 8));
 const paths = ["main", "wasm", "worker", "worker-wasm"];
+const communicationCases = [
+  { id: "fine", tileWidth: 2, tileHeight: 2, tileCount: 144_000 },
+];
 
 const elements = {
   workload: document.querySelector("#workload"),
@@ -21,14 +23,8 @@ const elements = {
   result: document.querySelector("#result"),
   isolation: document.querySelector("#isolation-status"),
   coreCount: document.querySelector("#core-count"),
-  startLive: document.querySelector("#start-live"),
-  stopLive: document.querySelector("#stop-live"),
-  transferCanvas: document.querySelector("#transfer-canvas"),
-  sabCanvas: document.querySelector("#sab-canvas"),
-  transferFps: document.querySelector("#transfer-fps"),
-  transferTicks: document.querySelector("#transfer-ticks"),
-  sabFps: document.querySelector("#sab-fps"),
-  sabTicks: document.querySelector("#sab-ticks"),
+  runTilesAll: document.querySelector("#run-tiles-all"),
+  tileResult: document.querySelector("#tile-result"),
 };
 
 paths.forEach((path) => {
@@ -38,13 +34,25 @@ paths.forEach((path) => {
   elements[`${path}Meter`] = document.querySelector(`#${path}-meter`);
 });
 
+communicationCases.forEach(({ id }) => {
+  elements[`${id}MessageCanvas`] = document.querySelector(`#${id}-message-canvas`);
+  elements[`${id}SabCanvas`] = document.querySelector(`#${id}-sab-canvas`);
+  elements[`${id}MessageTime`] = document.querySelector(`#${id}-message-time`);
+  elements[`${id}SabTime`] = document.querySelector(`#${id}-sab-time`);
+  elements[`${id}MessageBar`] = document.querySelector(`#${id}-message-bar`);
+  elements[`${id}SabBar`] = document.querySelector(`#${id}-sab-bar`);
+  elements[`${id}MessageState`] = document.querySelector(`#${id}-message-state`);
+  elements[`${id}SabState`] = document.querySelector(`#${id}-sab-state`);
+  elements[`${id}RunMessage`] = document.querySelector(`#run-${id}-message`);
+  elements[`${id}RunSab`] = document.querySelector(`#run-${id}-sab`);
+});
+
 let isRunning = false;
 let results = {};
-let liveComparison;
+let tileResults = {};
 
 updateEnvironment();
 bindEvents();
-bindLiveEvents();
 
 function bindEvents() {
   elements.workload.addEventListener("input", () => {
@@ -56,13 +64,11 @@ function bindEvents() {
   elements.runWorker.addEventListener("click", () => renderWithWorkers("worker", "javascript"));
   elements.runWorkerWasm.addEventListener("click", () => renderWithWorkers("worker-wasm", "wasm"));
   elements.runAll.addEventListener("click", renderAll);
-}
-
-function bindLiveEvents() {
-  elements.startLive.addEventListener("click", startLiveComparison);
-  elements.stopLive.addEventListener("click", stopLiveComparison);
-  bindPointer(elements.transferCanvas, updateTransferPointer);
-  bindPointer(elements.sabCanvas, updateSabPointer);
+  elements.runTilesAll.addEventListener("click", renderAllCommunicationPaths);
+  communicationCases.forEach((communicationCase) => {
+    elements[`${communicationCase.id}RunMessage`].addEventListener("click", () => renderCommunicationPath(communicationCase, "message"));
+    elements[`${communicationCase.id}RunSab`].addEventListener("click", () => renderCommunicationPath(communicationCase, "sab"));
+  });
 }
 
 function updateEnvironment() {
@@ -79,7 +85,10 @@ function updateEnvironment() {
   elements.runWorker.disabled = true;
   elements.runWorkerWasm.disabled = true;
   elements.runAll.disabled = true;
-  elements.startLive.disabled = true;
+  elements.runTilesAll.disabled = true;
+  communicationCases.forEach(({ id }) => {
+    elements[`${id}RunSab`].disabled = true;
+  });
   setObservation("SharedArrayBuffer には cross-origin isolation が必要です。<code>pnpm dev</code> で起動してください。", "warning");
 }
 
@@ -101,6 +110,16 @@ async function renderAll() {
   await renderWithWorkers("worker-wasm", "wasm");
 }
 
+async function renderAllCommunicationPaths() {
+  resetCommunicationResults();
+  for (const communicationCase of communicationCases) {
+    await renderCommunicationPath(communicationCase, "message");
+    await nextPaint();
+    await renderCommunicationPath(communicationCase, "sab");
+    await nextPaint();
+  }
+}
+
 async function renderOnMainThread() {
   if (isRunning) return;
 
@@ -116,7 +135,7 @@ async function renderOnMainThread() {
     renderRow(pixels, row, configuration().iterations);
   }
 
-  drawPixels("main", pixels);
+  drawPixels(elements.mainCanvas, pixels);
   finishPath("main", performance.now() - start);
   isRunning = false;
   setControlsDisabled(false);
@@ -141,7 +160,7 @@ async function renderWasmOnMainThread() {
       render(row, configuration().iterations);
     }
 
-    drawPixels("wasm", pixels);
+    drawPixels(elements.wasmCanvas, pixels);
     finishPath("wasm", performance.now() - start);
   } catch (error) {
     console.error(error);
@@ -189,7 +208,7 @@ async function renderWithWorkers(path, mode) {
       });
     });
 
-    drawPixels(path, pixels);
+    drawPixels(elements[`${path}Canvas`], pixels);
     finishPath(path, performance.now() - start);
   } catch (error) {
     console.error(error);
@@ -203,8 +222,127 @@ async function renderWithWorkers(path, mode) {
   }
 }
 
-function drawPixels(path, pixels) {
-  const context = elements[`${path}Canvas`].getContext("2d");
+async function renderCommunicationPath(communicationCase, mode) {
+  if (isRunning || (mode === "sab" && !hasSharedMemory())) return;
+
+  isRunning = true;
+  setControlsDisabled(true);
+  elements[`${communicationCase.id}${mode === "message" ? "Message" : "Sab"}State`].textContent = "計測中";
+
+  try {
+    const elapsed = mode === "message" ? await renderMessageTiles(communicationCase) : await renderSabTiles(communicationCase);
+    const measurement = { value: elapsed, label: formatTime(elapsed) };
+    finishCommunicationPath(communicationCase.id, mode, measurement);
+    updateTileResult();
+  } catch (error) {
+    console.error(error);
+    elements[`${communicationCase.id}${mode === "message" ? "Message" : "Sab"}State`].textContent = "計測に失敗";
+    setTileResult("計測に失敗しました。ブラウザのコンソールを確認してください。", "warning");
+  } finally {
+    isRunning = false;
+    setControlsDisabled(false);
+  }
+}
+
+async function renderMessageTiles(tileCase) {
+  const canvas = elements[`${tileCase.id}MessageCanvas`];
+  const image = canvas.getContext("2d").createImageData(IMAGE_WIDTH, IMAGE_HEIGHT);
+  const activeWorkerCount = Math.min(workerCount, tileCase.tileCount);
+  const workers = Array.from({ length: activeWorkerCount }, () => new Worker(messageTileWorkerUrl, { type: "module" }));
+  let nextTile = 0;
+  let completedTiles = 0;
+  const start = performance.now();
+
+  try {
+    await new Promise((resolve, reject) => {
+      const dispatch = (worker) => {
+        if (nextTile >= tileCase.tileCount) return;
+
+        worker.postMessage({
+          type: "task",
+          tile: nextTile,
+          tileWidth: tileCase.tileWidth,
+          tileHeight: tileCase.tileHeight,
+        });
+        nextTile += 1;
+      };
+
+      workers.forEach((worker) => {
+        worker.addEventListener("message", ({ data }) => {
+          if (data.type === "ready") {
+            dispatch(worker);
+            return;
+          }
+
+          drawTile(image, data.tile, tileCase.tileWidth, tileCase.tileHeight, new Uint8ClampedArray(data.pixels));
+          completedTiles += 1;
+          if (completedTiles === tileCase.tileCount) {
+            resolve();
+            return;
+          }
+
+          dispatch(worker);
+        });
+        worker.addEventListener("error", (event) => reject(event.error), { once: true });
+      });
+    });
+
+    canvas.getContext("2d").putImageData(image, 0, 0);
+    return performance.now() - start;
+  } finally {
+    workers.forEach((worker) => worker.terminate());
+  }
+}
+
+async function renderSabTiles(tileCase) {
+  const pixelsBuffer = new SharedArrayBuffer(IMAGE_WIDTH * IMAGE_HEIGHT * 4);
+  const pixels = new Uint8ClampedArray(pixelsBuffer);
+  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+  const control = new Int32Array(controlBuffer);
+  const activeWorkerCount = Math.min(workerCount, tileCase.tileCount);
+  const workers = Array.from({ length: activeWorkerCount }, () => new Worker(sabTileWorkerUrl, { type: "module" }));
+  let completedWorkers = 0;
+  const start = performance.now();
+
+  try {
+    await new Promise((resolve, reject) => {
+      workers.forEach((worker) => {
+        worker.addEventListener("message", () => {
+          completedWorkers += 1;
+          if (completedWorkers === activeWorkerCount) resolve();
+        }, { once: true });
+        worker.addEventListener("error", (event) => reject(event.error), { once: true });
+        worker.postMessage({
+          pixelsBuffer,
+          controlBuffer,
+          tileCount: tileCase.tileCount,
+          tileWidth: tileCase.tileWidth,
+          tileHeight: tileCase.tileHeight,
+        });
+      });
+    });
+
+    drawPixels(elements[`${tileCase.id}SabCanvas`], pixels);
+    return performance.now() - start;
+  } finally {
+    workers.forEach((worker) => worker.terminate());
+  }
+}
+
+function drawTile(image, tile, tileWidth, tileHeight, pixels) {
+  const tileColumns = IMAGE_WIDTH / tileWidth;
+  const startColumn = (tile % tileColumns) * tileWidth;
+  const startRow = Math.floor(tile / tileColumns) * tileHeight;
+
+  for (let row = 0; row < tileHeight; row += 1) {
+    const destination = ((startRow + row) * IMAGE_WIDTH + startColumn) * 4;
+    const source = row * tileWidth * 4;
+    image.data.set(pixels.subarray(source, source + tileWidth * 4), destination);
+  }
+}
+
+function drawPixels(canvas, pixels) {
+  const context = canvas.getContext("2d");
   context.putImageData(new ImageData(new Uint8ClampedArray(pixels), IMAGE_WIDTH, IMAGE_HEIGHT), 0, 0);
 }
 
@@ -213,6 +351,29 @@ function finishPath(path, elapsed) {
   elements[`${path}Time`].textContent = formatTime(elapsed);
   setPath(path, "描画完了", 100);
   updateObservation();
+}
+
+function finishCommunicationPath(id, mode, measurement) {
+  const key = mode === "message" ? "Message" : "Sab";
+  const resultKey = mode === "message" ? "messageValue" : "sabValue";
+  tileResults[id] ??= {};
+  tileResults[id][resultKey] = measurement.value;
+  elements[`${id}${key}Time`].textContent = measurement.label;
+  elements[`${id}${key}State`].textContent = "計測完了";
+  updateCommunicationBars(id);
+}
+
+function updateCommunicationBars(id) {
+  const result = tileResults[id];
+  if (!result?.messageValue || !result?.sabValue) {
+    if (result?.messageValue) elements[`${id}MessageBar`].style.width = "100%";
+    if (result?.sabValue) elements[`${id}SabBar`].style.width = "100%";
+    return;
+  }
+
+  const longest = Math.max(result.messageValue, result.sabValue);
+  elements[`${id}MessageBar`].style.width = `${Math.max(3, (result.messageValue / longest) * 100)}%`;
+  elements[`${id}SabBar`].style.width = `${Math.max(3, (result.sabValue / longest) * 100)}%`;
 }
 
 function updateObservation() {
@@ -225,6 +386,26 @@ function updateObservation() {
   const workerSpeed = results.main / results.worker;
   const workerWasmSpeed = results.main / results["worker-wasm"];
   setObservation(`<strong>WASM: ${wasmSpeed.toFixed(1)}× / Worker: ${workerSpeed.toFixed(1)}× / Worker + WASM: ${workerWasmSpeed.toFixed(1)}×</strong> メインスレッド JavaScript を基準にした実測値です。`, "success");
+}
+
+function updateTileResult() {
+  const fineComplete = tileResults.fine?.messageValue && tileResults.fine?.sabValue;
+
+  if (!fineComplete) {
+    setTileResult("2 経路を実行すると、受け渡し方式による差を比較します。");
+    return;
+  }
+
+  const fine = formatVerdict(tileResults.fine.messageValue, tileResults.fine.sabValue);
+  setTileResult(`<strong>144,000 個の結果: ${fine}</strong>`, "success");
+}
+
+function formatVerdict(messageTime, sabTime) {
+  const ratio = messageTime / sabTime;
+
+  if (ratio > 1.25) return `SAB ${ratio.toFixed(1)}×`;
+  if (ratio < 0.8) return `postMessage ${(1 / ratio).toFixed(1)}×`;
+  return "ほぼ同じ";
 }
 
 function setPath(path, state, percentage) {
@@ -241,138 +422,11 @@ function setControlsDisabled(disabled) {
   elements.runWorker.disabled = workerDisabled;
   elements.runWasm.disabled = disabled;
   elements.runWorkerWasm.disabled = workerDisabled;
-}
-
-function bindPointer(canvas, onMove) {
-  canvas.addEventListener("pointermove", (event) => {
-    if (!liveComparison) return;
-
-    const bounds = canvas.getBoundingClientRect();
-    onMove((event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
+  elements.runTilesAll.disabled = workerDisabled;
+  communicationCases.forEach(({ id }) => {
+    elements[`${id}RunMessage`].disabled = disabled;
+    elements[`${id}RunSab`].disabled = workerDisabled;
   });
-}
-
-function startLiveComparison() {
-  stopLiveComparison();
-
-  const transferWorker = new Worker(transferWorkerUrl, { type: "module" });
-  const sabWorker = new Worker(sabWorkerUrl, { type: "module" });
-  const positionsBuffer = new SharedArrayBuffer(PARTICLE_COUNT * 2 * Float32Array.BYTES_PER_ELEMENT * 2);
-  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 5);
-  const control = new Int32Array(controlBuffer);
-  const transferImage = createParticleImage(elements.transferCanvas);
-  const sabImage = createParticleImage(elements.sabCanvas);
-
-  Atomics.store(control, 2, 5_000);
-  Atomics.store(control, 3, 5_000);
-  liveComparison = {
-    active: true,
-    control,
-    positionsBuffer,
-    transferWorker,
-    sabWorker,
-    transferImage,
-    sabImage,
-    transferFrames: 0,
-    transferRounds: 0,
-    sabFrames: 0,
-    sabTicks: 0,
-    lastSabTicks: 0,
-    lastSabFrame: -1,
-    lastSample: performance.now(),
-  };
-
-  transferWorker.addEventListener("message", ({ data }) => {
-    if (!liveComparison || !liveComparison.active) return;
-
-    liveComparison.transferBuffer = data.buffer;
-  });
-  transferWorker.addEventListener("error", showLiveError, { once: true });
-  sabWorker.addEventListener("error", showLiveError, { once: true });
-
-  transferWorker.postMessage({ type: "start" });
-  sabWorker.postMessage({ type: "start", positionsBuffer, controlBuffer });
-  elements.startLive.disabled = true;
-  elements.stopLive.disabled = false;
-  updateLiveComparison();
-}
-
-function updateTransferPointer(x, y) {
-  if (!liveComparison) return;
-  liveComparison.transferWorker.postMessage({ type: "pointer", x, y });
-}
-
-function updateSabPointer(x, y) {
-  if (!liveComparison) return;
-  Atomics.store(liveComparison.control, 2, Math.round(x * 10_000));
-  Atomics.store(liveComparison.control, 3, Math.round(y * 10_000));
-}
-
-function updateLiveComparison() {
-  if (!liveComparison || !liveComparison.active) return;
-
-  if (liveComparison.transferBuffer) {
-    const positions = new Float32Array(liveComparison.transferBuffer);
-    drawParticles(elements.transferCanvas, liveComparison.transferImage, positions);
-    liveComparison.transferFrames += 1;
-    liveComparison.transferRounds += 1;
-    liveComparison.transferWorker.postMessage({ type: "recycle", buffer: liveComparison.transferBuffer }, [liveComparison.transferBuffer]);
-    liveComparison.transferBuffer = undefined;
-  }
-
-  const frame = Atomics.load(liveComparison.control, 1);
-  if (frame !== liveComparison.lastSabFrame) {
-    const publishedBuffer = Atomics.load(liveComparison.control, 0);
-    const frameSize = PARTICLE_COUNT * 2 * Float32Array.BYTES_PER_ELEMENT;
-    const positions = new Float32Array(liveComparison.positionsBuffer, publishedBuffer * frameSize, PARTICLE_COUNT * 2);
-    drawParticles(elements.sabCanvas, liveComparison.sabImage, positions);
-    liveComparison.sabFrames += 1;
-    liveComparison.lastSabFrame = frame;
-  }
-
-  liveComparison.sabTicks = Atomics.load(liveComparison.control, 4);
-  const now = performance.now();
-  const elapsed = now - liveComparison.lastSample;
-
-  if (elapsed >= 1_000) {
-    elements.transferFps.textContent = `${Math.round(liveComparison.transferFrames * 1_000 / elapsed)} FPS`;
-    elements.transferTicks.textContent = `${Math.round(liveComparison.transferRounds * 1_000 / elapsed)} 往復/秒`;
-    elements.sabFps.textContent = `${Math.round(liveComparison.sabFrames * 1_000 / elapsed)} FPS`;
-    elements.sabTicks.textContent = `${Math.round((liveComparison.sabTicks - liveComparison.lastSabTicks) * 1_000 / elapsed)} 更新/秒`;
-    liveComparison.transferFrames = 0;
-    liveComparison.transferRounds = 0;
-    liveComparison.sabFrames = 0;
-    liveComparison.lastSabTicks = liveComparison.sabTicks;
-    liveComparison.lastSample = now;
-  }
-
-  liveComparison.frameId = requestAnimationFrame(updateLiveComparison);
-}
-
-function stopLiveComparison() {
-  if (!liveComparison) return;
-
-  liveComparison.active = false;
-  cancelAnimationFrame(liveComparison.frameId);
-  liveComparison.transferWorker.postMessage({ type: "stop" });
-  liveComparison.sabWorker.postMessage({ type: "stop" });
-  liveComparison.transferWorker.terminate();
-  liveComparison.sabWorker.terminate();
-  liveComparison = undefined;
-  elements.startLive.disabled = !hasSharedMemory();
-  elements.stopLive.disabled = true;
-  elements.transferTicks.textContent = "停止中";
-  elements.sabTicks.textContent = "停止中";
-}
-
-function showLiveError(error) {
-  console.error(error);
-  stopLiveComparison();
-  setObservation("ライブ比較に失敗しました。ブラウザのコンソールで Worker のエラーを確認してください。", "warning");
-}
-
-function createParticleImage(canvas) {
-  return canvas.getContext("2d").createImageData(canvas.width, canvas.height);
 }
 
 function resetResults() {
@@ -384,9 +438,27 @@ function resetResults() {
   updateObservation();
 }
 
+function resetCommunicationResults() {
+  tileResults = {};
+  communicationCases.forEach(({ id }) => {
+    elements[`${id}MessageTime`].textContent = "—";
+    elements[`${id}SabTime`].textContent = "—";
+    elements[`${id}MessageBar`].style.width = "0";
+    elements[`${id}SabBar`].style.width = "0";
+    elements[`${id}MessageState`].textContent = "準備完了";
+    elements[`${id}SabState`].textContent = "準備完了";
+  });
+  updateTileResult();
+}
+
 function setObservation(message, type = "") {
   elements.result.className = `result ${type}`;
   elements.result.querySelector(".result-text").innerHTML = message;
+}
+
+function setTileResult(message, type = "") {
+  elements.tileResult.className = `tile-result ${type}`;
+  elements.tileResult.querySelector(".tile-result-text").innerHTML = message;
 }
 
 function formatTime(milliseconds) {

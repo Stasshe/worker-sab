@@ -19,8 +19,8 @@
 - UI はライトテーマ、日本語を基調とする。
 - Rust/WASM は `pnpm run wasm` でコンパイルし、`pnpm dev` と `pnpm run build` の前に自動実行する。
 
-## Live state comparison
+## High-frequency communication comparison
 
-- Transferable: Worker と画面の間で、各フレームの粒子位置バッファの所有権を移す。
-- SAB: Worker は共有ダブルバッファへ書き、画面は `Atomics` で公開された最新フレームだけを読む。
-- 両者は 16,000 粒子、同じ物理更新式、同じマウス入力を使う。
+- 3 波源からの最短距離を RGBA に変換するヒートマップを 2 × 2 px の 144,000 タイルで描く。
+- `postMessage` 経路は各タイルを配布して RGBA を受け取る。
+- SAB 経路は共有キューからタイル番号を atomically claim して共有画像へ直接書く。
