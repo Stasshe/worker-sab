@@ -4,8 +4,10 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "wasm": "cargo build --manifest-path wasm/Cargo.toml --target wasm32-unknown-unknown --release --target-dir public/wasm",
+    "predev": "pnpm run wasm",
     "dev": "vite",
-    "build": "vite build",
+    "build": "pnpm run wasm && vite build",
     "preview": "vite preview"
   },
   "devDependencies": {

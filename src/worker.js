@@ -1,27 +1,33 @@
-const CONTROL_SIZE = 2;
+import { IMAGE_HEIGHT, IMAGE_WIDTH, renderRow } from "./fractal.js";
 
-self.onmessage = ({ data }) => {
-  const control = new Int32Array(data.memory, 0, CONTROL_SIZE);
-  const output = new Int32Array(data.memory, CONTROL_SIZE * Int32Array.BYTES_PER_ELEMENT, data.taskCount);
+const wasmUrl = new URL("/wasm/wasm32-unknown-unknown/release/mandelbrot.wasm", self.location.origin);
+
+self.onmessage = async ({ data }) => {
+  const pixels = new Uint8ClampedArray(data.pixelsBuffer);
+  const control = new Int32Array(data.controlBuffer);
+  const render = data.mode === "wasm" ? await createWasmRenderer(pixels) : (row) => renderRow(pixels, row, data.iterations);
 
   for (;;) {
-    const taskIndex = Atomics.add(control, 0, 1);
-    if (taskIndex >= data.taskCount) break;
+    const row = Atomics.add(control, 0, 1);
+    if (row >= IMAGE_HEIGHT) break;
 
-    output[taskIndex] = calculate(taskIndex + 1, data.iterations);
+    render(row, data.iterations);
     Atomics.add(control, 1, 1);
   }
 
   self.postMessage({ type: "done" });
 };
 
-function calculate(seed, iterations) {
-  let value = seed;
+async function createWasmRenderer(pixels) {
+  const response = await fetch(wasmUrl);
+  const { instance } = await WebAssembly.instantiate(await response.arrayBuffer());
+  const exports = instance.exports;
+  const memory = exports.memory;
+  const outputPointer = exports.output_ptr();
 
-  for (let index = 0; index < iterations; index += 1) {
-    value = Math.imul(value ^ (value >>> 15), 2246822519);
-    value ^= value >>> 13;
-  }
-
-  return value;
+  return (row, iterations) => {
+    exports.render_row(row, IMAGE_WIDTH, IMAGE_HEIGHT, iterations);
+    const rowPixels = new Uint8ClampedArray(memory.buffer, outputPointer, IMAGE_WIDTH * 4);
+    pixels.set(rowPixels, row * IMAGE_WIDTH * 4);
+  };
 }

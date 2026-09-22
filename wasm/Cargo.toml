@@ -1,0 +1,13 @@
+[package]
+name = "mandelbrot"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = true
+codegen-units = 1

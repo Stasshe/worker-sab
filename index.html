@@ -1,95 +1,75 @@
 <!doctype html>
-<html lang="en">
+<html lang="ja">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#07110f" />
-    <title>Parallel / SAB</title>
+    <meta name="theme-color" content="#f7f8fc" />
+    <title>Worker / SAB / WASM で Mandelbrot を描く</title>
   </head>
   <body>
     <main class="shell">
       <header class="masthead">
-        <a class="mark" href="/" aria-label="Speed Lab home">
-          <span class="mark-dot"></span>
-          SPEED / LAB
-        </a>
-        <div class="isolation-status" id="isolation-status">
-          <span class="status-dot"></span>
-          <span>CHECKING MEMORY ACCESS</span>
-        </div>
+        <a class="mark" href="/" aria-label="Mandelbrot performance lab ホーム">MANDELBROT PERFORMANCE LAB</a>
+        <div class="isolation-status" id="isolation-status"><span class="status-dot"></span><span>共有メモリを確認中</span></div>
       </header>
 
       <section class="hero" aria-labelledby="page-title">
-        <p class="eyebrow">A browser performance experiment</p>
-        <h1 id="page-title">Give the main thread<br /><em>its life back.</em></h1>
-        <p class="lede">
-          The same compute-heavy workload. One path blocks your interface. The other
-          shares its queue across CPU cores with Web Workers and SharedArrayBuffer.
-        </p>
+        <p class="eyebrow">WEB PERFORMANCE / REAL WORKLOAD</p>
+        <h1 id="page-title">同じフラクタルを、<br /><em>どの場所で描くか。</em></h1>
+        <p class="lede">Mandelbrot 集合は、各ピクセルで複素数の反復計算を行う画像です。このページでは境界付近を 960 × 600 ピクセルで深く描画します。速さだけでなく、計算中に UI が止まるか、データをどう共有するかまで確認できます。</p>
       </section>
 
-      <section class="control-row" aria-label="Experiment controls">
-        <div class="workload-control">
-          <span class="control-label">WORKLOAD</span>
-          <div class="range-line">
-            <input id="workload" type="range" min="0" max="2" value="1" step="1" />
-            <output id="workload-label" for="workload">144M OPS</output>
-          </div>
+      <section class="facts" aria-label="このデモで実行する計算">
+        <div><span>画像サイズ</span><strong>960 × 600 px</strong></div>
+        <div><span>1 ピクセル</span><strong>複素数の反復</strong></div>
+        <div><span>共有単位</span><strong>1 行 = 960 px</strong></div>
+        <div><span>Rust/WASM</span><strong>行の計算カーネル</strong></div>
+      </section>
+
+      <section class="experiment" aria-labelledby="experiment-title">
+        <div class="experiment-heading">
+          <div><p class="eyebrow">同じ画像、3 つの実装</p><h2 id="experiment-title">描画結果を見ながら、実行経路を比べる。</h2></div>
+          <p>すべて同一の座標・反復回数・配色を使います。JavaScript Worker は RGBA ピクセルを SAB へ直接書き込み、WASM Worker は WASM メモリで 1 行を計算してから SAB へ戻します。</p>
         </div>
-        <button class="run-all" id="run-all" type="button">RUN THE COMPARISON <span>↗</span></button>
+
+        <div class="control-row" aria-label="レンダリング設定">
+          <div class="workload-control"><span class="control-label">最大反復回数</span><div class="range-line"><input id="workload" type="range" min="0" max="2" value="1" step="1" /><output id="workload-label" for="workload">高負荷 · 4,000 回</output></div></div>
+          <button class="run-all" id="run-all" type="button">3 通りを順番に描画 <span>→</span></button>
+        </div>
+
+        <div class="comparison" aria-label="Mandelbrot の描画方法の比較">
+          <article class="lane main-lane">
+            <div class="lane-header"><div><p class="lane-number">PATH 01 / BASELINE</p><h3>メインスレッド JavaScript</h3></div><div class="lane-icon blocked-icon" aria-hidden="true">!</div></div>
+            <p class="lane-copy">全 600 行を UI と同じスレッドで処理する。描画、クリック、スクロールも待たされる。</p>
+            <canvas class="fractal" id="main-canvas" width="960" height="600" aria-label="メインスレッド JavaScript で描画した Mandelbrot 集合"></canvas>
+            <div class="meter" aria-hidden="true"><span id="main-meter"></span></div>
+            <div class="readout"><span id="main-time">—</span><span id="main-state">準備完了</span></div>
+            <button class="lane-button" id="run-main" type="button">メインスレッドで描画</button>
+          </article>
+
+          <article class="lane worker-lane">
+            <div class="lane-header"><div><p class="lane-number">PATH 02 / PARALLEL</p><h3>Worker + SAB / JavaScript</h3></div><div class="lane-icon worker-icon" aria-hidden="true">↗</div></div>
+            <p class="lane-copy">Worker が行を分担し、共有ピクセルバッファに書く。メインスレッドは進捗だけを読む。</p>
+            <canvas class="fractal" id="worker-canvas" width="960" height="600" aria-label="Worker と SharedArrayBuffer の JavaScript で描画した Mandelbrot 集合"></canvas>
+            <div class="meter" aria-hidden="true"><span id="worker-meter"></span></div>
+            <div class="readout"><span id="worker-time">—</span><span id="worker-state">準備完了</span></div>
+            <button class="lane-button primary" id="run-worker" type="button">Worker + SAB で描画</button>
+          </article>
+
+          <article class="lane wasm-lane">
+            <div class="lane-header"><div><p class="lane-number">PATH 03 / KERNEL</p><h3>Worker + SAB / Rust WASM</h3></div><div class="lane-icon wasm-icon" aria-hidden="true">W</div></div>
+            <p class="lane-copy">Worker 内では Rust でコンパイルした WASM が行の数値計算を担当する。結果は同じ SAB に戻す。</p>
+            <canvas class="fractal" id="wasm-canvas" width="960" height="600" aria-label="Worker、SharedArrayBuffer、Rust WebAssembly で描画した Mandelbrot 集合"></canvas>
+            <div class="meter" aria-hidden="true"><span id="wasm-meter"></span></div>
+            <div class="readout"><span id="wasm-time">—</span><span id="wasm-state">準備完了</span></div>
+            <button class="lane-button wasm-button" id="run-wasm" type="button">Rust WASM で描画</button>
+          </article>
+        </div>
+
+        <section class="result" id="result" aria-live="polite"><p class="result-label">計測結果</p><p class="result-text">3 つの画像を描画すると、端末上の実測値を比較します。</p></section>
       </section>
 
-      <section class="comparison" aria-label="Compute comparison">
-        <article class="lane main-lane">
-          <div class="lane-header">
-            <div>
-              <p class="lane-number">01 / BLOCKING</p>
-              <h2>Main thread</h2>
-            </div>
-            <div class="lane-icon blocked-icon" aria-hidden="true">∥</div>
-          </div>
-          <p class="lane-copy">One JavaScript loop owns the UI until every task is finished.</p>
-          <div class="meter" aria-hidden="true"><span id="main-meter"></span></div>
-          <div class="readout">
-            <span id="main-time">—</span>
-            <span id="main-state">READY</span>
-          </div>
-          <button class="lane-button" id="run-main" type="button">BLOCK THE INTERFACE</button>
-        </article>
-
-        <article class="lane worker-lane">
-          <div class="lane-header">
-            <div>
-              <p class="lane-number">02 / PARALLEL</p>
-              <h2>Workers + SAB</h2>
-            </div>
-            <div class="lane-icon worker-icon" aria-hidden="true">✳</div>
-          </div>
-          <p class="lane-copy">Workers atomically pull shared tasks. The UI keeps breathing.</p>
-          <div class="meter" aria-hidden="true"><span id="worker-meter"></span></div>
-          <div class="readout">
-            <span id="worker-time">—</span>
-            <span id="worker-state">READY</span>
-          </div>
-          <button class="lane-button primary" id="run-worker" type="button">RELEASE THE WORKERS</button>
-        </article>
-      </section>
-
-      <section class="result" id="result" aria-live="polite">
-        <p class="result-label">OBSERVATION</p>
-        <p class="result-text">Run both lanes to measure the difference on this device.</p>
-      </section>
-
-      <section class="anatomy" aria-label="How the worker path works">
-        <div class="anatomy-heading"><p class="eyebrow">The fast lane</p><h2>One shared memory map.<br />No copied task list.</h2></div>
-        <ol class="steps">
-          <li><span>01</span><p><strong>Shared queue</strong>Task cursor and output slots live inside a SharedArrayBuffer.</p></li>
-          <li><span>02</span><p><strong>Atomic claim</strong>Each Worker claims the next index with <code>Atomics.add()</code>.</p></li>
-          <li><span>03</span><p><strong>Free UI</strong>The main thread only paints progress while cores do the work.</p></li>
-        </ol>
-      </section>
-
-      <footer><span>WEB WORKERS × SHAREDARRAYBUFFER</span><span id="core-count">DETECTING CORES</span></footer>
+      <footer><span>WEB WORKERS × SHAREDARRAYBUFFER × RUST / WASM</span><span id="core-count">CPU コアを確認中</span></footer>
     </main>
     <script type="module" src="/src/main.js"></script>
   </body>

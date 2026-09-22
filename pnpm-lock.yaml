@@ -9,7 +9,7 @@ importers:
   .:
     devDependencies:
       vite:
-        specifier: latest
+        specifier: ^8.3.0
         version: 8.3.0
 
 packages:
