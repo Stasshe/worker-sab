@@ -28,13 +28,13 @@
 
       <section class="experiment" aria-labelledby="experiment-title">
         <div class="experiment-heading">
-          <div><p class="eyebrow">同じ画像、3 つの実装</p><h2 id="experiment-title">描画結果を見ながら、実行経路を比べる。</h2></div>
-          <p>すべて同一の座標・反復回数・配色を使います。JavaScript Worker は RGBA ピクセルを SAB へ直接書き込み、WASM Worker は WASM メモリで 1 行を計算してから SAB へ戻します。</p>
+          <div><p class="eyebrow">同じ画像、4 つの実装</p><h2 id="experiment-title">Worker と WASM の効果を、混ぜずに比べる。</h2></div>
+          <p>JavaScript と Rust/WASM を、メインスレッドと Worker + SAB の両方で描画します。WASM 単体と並列化単体、それらを重ねた経路を同じ画像で比較できます。</p>
         </div>
 
         <div class="control-row" aria-label="レンダリング設定">
           <div class="workload-control"><span class="control-label">最大反復回数</span><div class="range-line"><input id="workload" type="range" min="0" max="2" value="1" step="1" /><output id="workload-label" for="workload">高負荷 · 4,000 回</output></div></div>
-          <button class="run-all" id="run-all" type="button">3 通りを順番に描画 <span>→</span></button>
+          <button class="run-all" id="run-all" type="button">4 通りを順番に描画 <span>→</span></button>
         </div>
 
         <div class="comparison" aria-label="Mandelbrot の描画方法の比較">
@@ -47,8 +47,17 @@
             <button class="lane-button" id="run-main" type="button">メインスレッドで描画</button>
           </article>
 
+          <article class="lane wasm-lane">
+            <div class="lane-header"><div><p class="lane-number">PATH 02 / KERNEL</p><h3>メインスレッド Rust WASM</h3></div><div class="lane-icon wasm-icon" aria-hidden="true">W</div></div>
+            <p class="lane-copy">Rust/WASM が行の数値計算を行う。ただし UI と同じスレッドなので、描画中の画面は止まる。</p>
+            <canvas class="fractal" id="wasm-canvas" width="960" height="600" aria-label="メインスレッドの Rust WebAssembly で描画した Mandelbrot 集合"></canvas>
+            <div class="meter" aria-hidden="true"><span id="wasm-meter"></span></div>
+            <div class="readout"><span id="wasm-time">—</span><span id="wasm-state">準備完了</span></div>
+            <button class="lane-button wasm-button" id="run-wasm" type="button">Rust WASM で描画</button>
+          </article>
+
           <article class="lane worker-lane">
-            <div class="lane-header"><div><p class="lane-number">PATH 02 / PARALLEL</p><h3>Worker + SAB / JavaScript</h3></div><div class="lane-icon worker-icon" aria-hidden="true">↗</div></div>
+            <div class="lane-header"><div><p class="lane-number">PATH 03 / PARALLEL</p><h3>Worker + SAB / JavaScript</h3></div><div class="lane-icon worker-icon" aria-hidden="true">↗</div></div>
             <p class="lane-copy">Worker が行を分担し、共有ピクセルバッファに書く。メインスレッドは進捗だけを読む。</p>
             <canvas class="fractal" id="worker-canvas" width="960" height="600" aria-label="Worker と SharedArrayBuffer の JavaScript で描画した Mandelbrot 集合"></canvas>
             <div class="meter" aria-hidden="true"><span id="worker-meter"></span></div>
@@ -56,17 +65,17 @@
             <button class="lane-button primary" id="run-worker" type="button">Worker + SAB で描画</button>
           </article>
 
-          <article class="lane wasm-lane">
-            <div class="lane-header"><div><p class="lane-number">PATH 03 / KERNEL</p><h3>Worker + SAB / Rust WASM</h3></div><div class="lane-icon wasm-icon" aria-hidden="true">W</div></div>
-            <p class="lane-copy">Worker 内では Rust でコンパイルした WASM が行の数値計算を担当する。結果は同じ SAB に戻す。</p>
-            <canvas class="fractal" id="wasm-canvas" width="960" height="600" aria-label="Worker、SharedArrayBuffer、Rust WebAssembly で描画した Mandelbrot 集合"></canvas>
-            <div class="meter" aria-hidden="true"><span id="wasm-meter"></span></div>
-            <div class="readout"><span id="wasm-time">—</span><span id="wasm-state">準備完了</span></div>
-            <button class="lane-button wasm-button" id="run-wasm" type="button">Rust WASM で描画</button>
+          <article class="lane worker-wasm-lane">
+            <div class="lane-header"><div><p class="lane-number">PATH 04 / COMBINED</p><h3>Worker + SAB / Rust WASM</h3></div><div class="lane-icon combined-icon" aria-hidden="true">W↗</div></div>
+            <p class="lane-copy">Worker の並列化と Rust/WASM の計算カーネルを組み合わせる。結果は SAB の画像バッファへ書く。</p>
+            <canvas class="fractal" id="worker-wasm-canvas" width="960" height="600" aria-label="Worker、SharedArrayBuffer、Rust WebAssembly で描画した Mandelbrot 集合"></canvas>
+            <div class="meter" aria-hidden="true"><span id="worker-wasm-meter"></span></div>
+            <div class="readout"><span id="worker-wasm-time">—</span><span id="worker-wasm-state">準備完了</span></div>
+            <button class="lane-button combined-button" id="run-worker-wasm" type="button">Worker + Rust WASM で描画</button>
           </article>
         </div>
 
-        <section class="result" id="result" aria-live="polite"><p class="result-label">計測結果</p><p class="result-text">3 つの画像を描画すると、端末上の実測値を比較します。</p></section>
+        <section class="result" id="result" aria-live="polite"><p class="result-label">計測結果</p><p class="result-text">4 つの画像を描画すると、端末上の実測値を比較します。</p></section>
       </section>
 
       <footer><span>WEB WORKERS × SHAREDARRAYBUFFER × RUST / WASM</span><span id="core-count">CPU コアを確認中</span></footer>

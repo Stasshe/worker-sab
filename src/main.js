@@ -1,10 +1,11 @@
 import { configurations, IMAGE_HEIGHT, IMAGE_WIDTH, renderRow } from "./fractal.js";
 import "./style.css";
+import { createWasmRenderer } from "./wasm.js";
 
 const workerUrl = new URL("./worker.js", import.meta.url);
 const coreCount = navigator.hardwareConcurrency || 4;
 const workerCount = Math.max(1, Math.min(coreCount - 1, 8));
-const paths = ["main", "worker", "wasm"];
+const paths = ["main", "wasm", "worker", "worker-wasm"];
 
 const elements = {
   workload: document.querySelector("#workload"),
@@ -13,6 +14,7 @@ const elements = {
   runMain: document.querySelector("#run-main"),
   runWorker: document.querySelector("#run-worker"),
   runWasm: document.querySelector("#run-wasm"),
+  runWorkerWasm: document.querySelector("#run-worker-wasm"),
   result: document.querySelector("#result"),
   isolation: document.querySelector("#isolation-status"),
   coreCount: document.querySelector("#core-count"),
@@ -37,15 +39,16 @@ function bindEvents() {
     resetResults();
   });
   elements.runMain.addEventListener("click", renderOnMainThread);
+  elements.runWasm.addEventListener("click", renderWasmOnMainThread);
   elements.runWorker.addEventListener("click", () => renderWithWorkers("worker", "javascript"));
-  elements.runWasm.addEventListener("click", () => renderWithWorkers("wasm", "wasm"));
+  elements.runWorkerWasm.addEventListener("click", () => renderWithWorkers("worker-wasm", "wasm"));
   elements.runAll.addEventListener("click", renderAll);
 }
 
 function updateEnvironment() {
   elements.coreCount.textContent = `${coreCount} 論理コア / ${workerCount} WORKER`;
 
-  if (crossOriginIsolated && typeof SharedArrayBuffer !== "undefined") {
+  if (hasSharedMemory()) {
     elements.isolation.classList.add("available");
     elements.isolation.lastElementChild.textContent = "共有メモリを利用可能";
     return;
@@ -54,7 +57,7 @@ function updateEnvironment() {
   elements.isolation.classList.add("unavailable");
   elements.isolation.lastElementChild.textContent = "共有メモリを利用不可";
   elements.runWorker.disabled = true;
-  elements.runWasm.disabled = true;
+  elements.runWorkerWasm.disabled = true;
   elements.runAll.disabled = true;
   setObservation("SharedArrayBuffer には cross-origin isolation が必要です。<code>pnpm dev</code> で起動してください。", "warning");
 }
@@ -63,12 +66,18 @@ function configuration() {
   return configurations[Number(elements.workload.value)];
 }
 
+function hasSharedMemory() {
+  return crossOriginIsolated && typeof SharedArrayBuffer !== "undefined";
+}
+
 async function renderAll() {
   await renderOnMainThread();
   await nextPaint();
+  await renderWasmOnMainThread();
+  await nextPaint();
   await renderWithWorkers("worker", "javascript");
   await nextPaint();
-  await renderWithWorkers("wasm", "wasm");
+  await renderWithWorkers("worker-wasm", "wasm");
 }
 
 async function renderOnMainThread() {
@@ -92,8 +101,39 @@ async function renderOnMainThread() {
   setControlsDisabled(false);
 }
 
+async function renderWasmOnMainThread() {
+  if (isRunning) return;
+
+  isRunning = true;
+  setControlsDisabled(true);
+  setPath("wasm", "WASM を読み込み中", 3);
+  await nextPaint();
+
+  const pixels = new Uint8ClampedArray(IMAGE_WIDTH * IMAGE_HEIGHT * 4);
+  const start = performance.now();
+
+  try {
+    const render = await createWasmRenderer(pixels);
+    setPath("wasm", "描画中: UI も待機", 3);
+
+    for (let row = 0; row < IMAGE_HEIGHT; row += 1) {
+      render(row, configuration().iterations);
+    }
+
+    drawPixels("wasm", pixels);
+    finishPath("wasm", performance.now() - start);
+  } catch (error) {
+    console.error(error);
+    setPath("wasm", "描画に失敗", 0);
+    setObservation("Rust WASM の読み込みまたは描画に失敗しました。ブラウザのコンソールを確認してください。", "warning");
+  } finally {
+    isRunning = false;
+    setControlsDisabled(false);
+  }
+}
+
 async function renderWithWorkers(path, mode) {
-  if (isRunning || !crossOriginIsolated) return;
+  if (isRunning || !hasSharedMemory()) return;
 
   isRunning = true;
   setControlsDisabled(true);
@@ -155,14 +195,15 @@ function finishPath(path, elapsed) {
 }
 
 function updateObservation() {
-  if (!results.main || !results.worker || !results.wasm) {
-    setObservation("3 つの画像を描画すると、端末上の実測値を比較します。");
+  if (!results.main || !results.wasm || !results.worker || !results["worker-wasm"]) {
+    setObservation("4 つの画像を描画すると、端末上の実測値を比較します。");
     return;
   }
 
-  const workerSpeed = results.main / results.worker;
   const wasmSpeed = results.main / results.wasm;
-  setObservation(`<strong>Worker + SAB: ${workerSpeed.toFixed(1)}× / Rust WASM: ${wasmSpeed.toFixed(1)}×</strong> メインスレッド JavaScript と比較した実測値です。`, "success");
+  const workerSpeed = results.main / results.worker;
+  const workerWasmSpeed = results.main / results["worker-wasm"];
+  setObservation(`<strong>WASM: ${wasmSpeed.toFixed(1)}× / Worker: ${workerSpeed.toFixed(1)}× / Worker + WASM: ${workerWasmSpeed.toFixed(1)}×</strong> メインスレッド JavaScript を基準にした実測値です。`, "success");
 }
 
 function setPath(path, state, percentage) {
@@ -171,11 +212,14 @@ function setPath(path, state, percentage) {
 }
 
 function setControlsDisabled(disabled) {
+  const workerDisabled = disabled || !hasSharedMemory();
+
   elements.workload.disabled = disabled;
-  elements.runAll.disabled = disabled;
+  elements.runAll.disabled = workerDisabled;
   elements.runMain.disabled = disabled;
-  elements.runWorker.disabled = disabled;
+  elements.runWorker.disabled = workerDisabled;
   elements.runWasm.disabled = disabled;
+  elements.runWorkerWasm.disabled = workerDisabled;
 }
 
 function resetResults() {
