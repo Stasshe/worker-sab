@@ -1,8 +1,11 @@
 import { configurations, IMAGE_HEIGHT, IMAGE_WIDTH, renderRow } from "./fractal.js";
+import { drawParticles, PARTICLE_COUNT } from "./particles.js";
 import "./style.css";
 import { createWasmRenderer } from "./wasm.js";
 
 const workerUrl = new URL("./worker.js", import.meta.url);
+const transferWorkerUrl = new URL("./particle-transfer.worker.js", import.meta.url);
+const sabWorkerUrl = new URL("./particle-sab.worker.js", import.meta.url);
 const coreCount = navigator.hardwareConcurrency || 4;
 const workerCount = Math.max(1, Math.min(coreCount - 1, 8));
 const paths = ["main", "wasm", "worker", "worker-wasm"];
@@ -18,6 +21,14 @@ const elements = {
   result: document.querySelector("#result"),
   isolation: document.querySelector("#isolation-status"),
   coreCount: document.querySelector("#core-count"),
+  startLive: document.querySelector("#start-live"),
+  stopLive: document.querySelector("#stop-live"),
+  transferCanvas: document.querySelector("#transfer-canvas"),
+  sabCanvas: document.querySelector("#sab-canvas"),
+  transferFps: document.querySelector("#transfer-fps"),
+  transferTicks: document.querySelector("#transfer-ticks"),
+  sabFps: document.querySelector("#sab-fps"),
+  sabTicks: document.querySelector("#sab-ticks"),
 };
 
 paths.forEach((path) => {
@@ -29,9 +40,11 @@ paths.forEach((path) => {
 
 let isRunning = false;
 let results = {};
+let liveComparison;
 
 updateEnvironment();
 bindEvents();
+bindLiveEvents();
 
 function bindEvents() {
   elements.workload.addEventListener("input", () => {
@@ -43,6 +56,13 @@ function bindEvents() {
   elements.runWorker.addEventListener("click", () => renderWithWorkers("worker", "javascript"));
   elements.runWorkerWasm.addEventListener("click", () => renderWithWorkers("worker-wasm", "wasm"));
   elements.runAll.addEventListener("click", renderAll);
+}
+
+function bindLiveEvents() {
+  elements.startLive.addEventListener("click", startLiveComparison);
+  elements.stopLive.addEventListener("click", stopLiveComparison);
+  bindPointer(elements.transferCanvas, updateTransferPointer);
+  bindPointer(elements.sabCanvas, updateSabPointer);
 }
 
 function updateEnvironment() {
@@ -59,6 +79,7 @@ function updateEnvironment() {
   elements.runWorker.disabled = true;
   elements.runWorkerWasm.disabled = true;
   elements.runAll.disabled = true;
+  elements.startLive.disabled = true;
   setObservation("SharedArrayBuffer には cross-origin isolation が必要です。<code>pnpm dev</code> で起動してください。", "warning");
 }
 
@@ -220,6 +241,138 @@ function setControlsDisabled(disabled) {
   elements.runWorker.disabled = workerDisabled;
   elements.runWasm.disabled = disabled;
   elements.runWorkerWasm.disabled = workerDisabled;
+}
+
+function bindPointer(canvas, onMove) {
+  canvas.addEventListener("pointermove", (event) => {
+    if (!liveComparison) return;
+
+    const bounds = canvas.getBoundingClientRect();
+    onMove((event.clientX - bounds.left) / bounds.width, (event.clientY - bounds.top) / bounds.height);
+  });
+}
+
+function startLiveComparison() {
+  stopLiveComparison();
+
+  const transferWorker = new Worker(transferWorkerUrl, { type: "module" });
+  const sabWorker = new Worker(sabWorkerUrl, { type: "module" });
+  const positionsBuffer = new SharedArrayBuffer(PARTICLE_COUNT * 2 * Float32Array.BYTES_PER_ELEMENT * 2);
+  const controlBuffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 5);
+  const control = new Int32Array(controlBuffer);
+  const transferImage = createParticleImage(elements.transferCanvas);
+  const sabImage = createParticleImage(elements.sabCanvas);
+
+  Atomics.store(control, 2, 5_000);
+  Atomics.store(control, 3, 5_000);
+  liveComparison = {
+    active: true,
+    control,
+    positionsBuffer,
+    transferWorker,
+    sabWorker,
+    transferImage,
+    sabImage,
+    transferFrames: 0,
+    transferRounds: 0,
+    sabFrames: 0,
+    sabTicks: 0,
+    lastSabTicks: 0,
+    lastSabFrame: -1,
+    lastSample: performance.now(),
+  };
+
+  transferWorker.addEventListener("message", ({ data }) => {
+    if (!liveComparison || !liveComparison.active) return;
+
+    liveComparison.transferBuffer = data.buffer;
+  });
+  transferWorker.addEventListener("error", showLiveError, { once: true });
+  sabWorker.addEventListener("error", showLiveError, { once: true });
+
+  transferWorker.postMessage({ type: "start" });
+  sabWorker.postMessage({ type: "start", positionsBuffer, controlBuffer });
+  elements.startLive.disabled = true;
+  elements.stopLive.disabled = false;
+  updateLiveComparison();
+}
+
+function updateTransferPointer(x, y) {
+  if (!liveComparison) return;
+  liveComparison.transferWorker.postMessage({ type: "pointer", x, y });
+}
+
+function updateSabPointer(x, y) {
+  if (!liveComparison) return;
+  Atomics.store(liveComparison.control, 2, Math.round(x * 10_000));
+  Atomics.store(liveComparison.control, 3, Math.round(y * 10_000));
+}
+
+function updateLiveComparison() {
+  if (!liveComparison || !liveComparison.active) return;
+
+  if (liveComparison.transferBuffer) {
+    const positions = new Float32Array(liveComparison.transferBuffer);
+    drawParticles(elements.transferCanvas, liveComparison.transferImage, positions);
+    liveComparison.transferFrames += 1;
+    liveComparison.transferRounds += 1;
+    liveComparison.transferWorker.postMessage({ type: "recycle", buffer: liveComparison.transferBuffer }, [liveComparison.transferBuffer]);
+    liveComparison.transferBuffer = undefined;
+  }
+
+  const frame = Atomics.load(liveComparison.control, 1);
+  if (frame !== liveComparison.lastSabFrame) {
+    const publishedBuffer = Atomics.load(liveComparison.control, 0);
+    const frameSize = PARTICLE_COUNT * 2 * Float32Array.BYTES_PER_ELEMENT;
+    const positions = new Float32Array(liveComparison.positionsBuffer, publishedBuffer * frameSize, PARTICLE_COUNT * 2);
+    drawParticles(elements.sabCanvas, liveComparison.sabImage, positions);
+    liveComparison.sabFrames += 1;
+    liveComparison.lastSabFrame = frame;
+  }
+
+  liveComparison.sabTicks = Atomics.load(liveComparison.control, 4);
+  const now = performance.now();
+  const elapsed = now - liveComparison.lastSample;
+
+  if (elapsed >= 1_000) {
+    elements.transferFps.textContent = `${Math.round(liveComparison.transferFrames * 1_000 / elapsed)} FPS`;
+    elements.transferTicks.textContent = `${Math.round(liveComparison.transferRounds * 1_000 / elapsed)} 往復/秒`;
+    elements.sabFps.textContent = `${Math.round(liveComparison.sabFrames * 1_000 / elapsed)} FPS`;
+    elements.sabTicks.textContent = `${Math.round((liveComparison.sabTicks - liveComparison.lastSabTicks) * 1_000 / elapsed)} 更新/秒`;
+    liveComparison.transferFrames = 0;
+    liveComparison.transferRounds = 0;
+    liveComparison.sabFrames = 0;
+    liveComparison.lastSabTicks = liveComparison.sabTicks;
+    liveComparison.lastSample = now;
+  }
+
+  liveComparison.frameId = requestAnimationFrame(updateLiveComparison);
+}
+
+function stopLiveComparison() {
+  if (!liveComparison) return;
+
+  liveComparison.active = false;
+  cancelAnimationFrame(liveComparison.frameId);
+  liveComparison.transferWorker.postMessage({ type: "stop" });
+  liveComparison.sabWorker.postMessage({ type: "stop" });
+  liveComparison.transferWorker.terminate();
+  liveComparison.sabWorker.terminate();
+  liveComparison = undefined;
+  elements.startLive.disabled = !hasSharedMemory();
+  elements.stopLive.disabled = true;
+  elements.transferTicks.textContent = "停止中";
+  elements.sabTicks.textContent = "停止中";
+}
+
+function showLiveError(error) {
+  console.error(error);
+  stopLiveComparison();
+  setObservation("ライブ比較に失敗しました。ブラウザのコンソールで Worker のエラーを確認してください。", "warning");
+}
+
+function createParticleImage(canvas) {
+  return canvas.getContext("2d").createImageData(canvas.width, canvas.height);
 }
 
 function resetResults() {

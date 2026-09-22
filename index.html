@@ -78,6 +78,36 @@
         <section class="result" id="result" aria-live="polite"><p class="result-label">計測結果</p><p class="result-text">4 つの画像を描画すると、端末上の実測値を比較します。</p></section>
       </section>
 
+      <section class="live-experiment" aria-labelledby="live-title">
+        <div class="live-heading">
+          <div><p class="eyebrow">CONTINUOUS EXCHANGE</p><h2 id="live-title">毎フレーム結果が必要なら、<br />SAB の差が見えてくる。</h2></div>
+          <p>16,000 個の粒子を Worker で更新します。マウスを各キャンバス上で動かすと、粒子が引き寄せられます。左はフレームごとに Transferable を往復、右はメインスレッドが共有バッファの最新状態を読むだけです。</p>
+        </div>
+
+        <div class="live-controls">
+          <div><span>状態バッファ</span><strong>16,000 粒子 × 位置 XY</strong></div>
+          <div><span>入力</span><strong>マウス座標を毎回更新</strong></div>
+          <button class="run-all" id="start-live" type="button">ライブ比較を開始 <span>→</span></button>
+          <button class="stop-live" id="stop-live" type="button" disabled>停止</button>
+        </div>
+
+        <div class="live-comparison" aria-label="Transferable と SharedArrayBuffer のリアルタイム粒子シミュレーション比較">
+          <article class="live-lane transfer-lane">
+            <div class="lane-header"><div><p class="lane-number">WORKER / TRANSFERABLE</p><h3>フレームを往復する</h3></div><div class="lane-icon blocked-icon" aria-hidden="true">↔</div></div>
+            <p>Worker → 画面 → Worker のたびに、位置バッファの所有権を移す。コピーは避けられるが、メッセージは毎フレーム必要。</p>
+            <canvas class="particle-canvas" id="transfer-canvas" width="560" height="320" aria-label="Transferable ArrayBuffer を使う粒子シミュレーション"></canvas>
+            <div class="live-readout"><span id="transfer-fps">— FPS</span><span id="transfer-ticks">停止中</span></div>
+          </article>
+
+          <article class="live-lane sab-live-lane">
+            <div class="lane-header"><div><p class="lane-number">WORKER / SAB</p><h3>最新フレームを読む</h3></div><div class="lane-icon worker-icon" aria-hidden="true">↗</div></div>
+            <p>Worker はダブルバッファへ書き、画面は最新の完成フレームだけを読む。位置バッファの往復メッセージは不要。</p>
+            <canvas class="particle-canvas" id="sab-canvas" width="560" height="320" aria-label="SharedArrayBuffer を使う粒子シミュレーション"></canvas>
+            <div class="live-readout"><span id="sab-fps">— FPS</span><span id="sab-ticks">停止中</span></div>
+          </article>
+        </div>
+      </section>
+
       <footer><span>WEB WORKERS × SHAREDARRAYBUFFER × RUST / WASM</span><span id="core-count">CPU コアを確認中</span></footer>
     </main>
     <script type="module" src="/src/main.js"></script>
