@@ -1,0 +1,91 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Manrope:wght@400;500;600;700;800&display=swap");
+
+:root {
+  color: #f1f6eb;
+  background: #07110f;
+  font-family: "Manrope", sans-serif;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: #07110f; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled, input:disabled { cursor: not-allowed; opacity: 0.46; }
+
+.shell { width: min(1180px, calc(100% - 48px)); margin: 0 auto; }
+.masthead { min-height: 92px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(215, 239, 166, 0.18); }
+.mark, .isolation-status, .eyebrow, .control-label, .lane-number, .readout, .result-label, footer { font-family: "DM Mono", monospace; font-size: 11px; letter-spacing: 0.12em; }
+.mark { color: inherit; text-decoration: none; font-weight: 500; display: flex; align-items: center; gap: 9px; }
+.mark-dot { width: 10px; height: 10px; border: 2px solid #c7ff36; border-radius: 50%; box-shadow: 0 0 16px #c7ff36; }
+.isolation-status { color: #a4b3a5; display: flex; align-items: center; gap: 8px; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: #e9b55d; }
+.available .status-dot { background: #c7ff36; box-shadow: 0 0 12px #c7ff36; }
+.unavailable .status-dot { background: #f07564; }
+
+.hero { padding: clamp(68px, 11vw, 132px) 0 64px; max-width: 900px; }
+.eyebrow { color: #c7ff36; text-transform: uppercase; margin: 0 0 20px; }
+h1, h2, p { margin-top: 0; }
+h1 { margin-bottom: 27px; color: #f6f8ee; font-size: clamp(54px, 8vw, 106px); letter-spacing: -0.075em; line-height: 0.91; font-weight: 700; }
+h1 em { font-family: "Instrument Serif", Georgia, serif; color: #c7ff36; font-weight: 400; letter-spacing: -0.04em; }
+.lede { max-width: 630px; color: #aab8ab; font-size: 17px; line-height: 1.7; }
+
+.control-row { border-top: 1px solid rgba(215, 239, 166, 0.18); border-bottom: 1px solid rgba(215, 239, 166, 0.18); min-height: 110px; display: flex; align-items: center; justify-content: space-between; gap: 32px; }
+.workload-control { width: min(420px, 100%); }
+.control-label { color: #7b8c7d; display: block; margin-bottom: 11px; }
+.range-line { display: flex; align-items: center; gap: 20px; }
+input[type="range"] { accent-color: #c7ff36; flex: 1; min-width: 110px; }
+output { color: #f1f6eb; font-family: "DM Mono", monospace; font-size: 13px; white-space: nowrap; }
+.run-all, .lane-button { background: transparent; border: 1px solid #90a68a; color: #eff6e9; letter-spacing: 0.08em; font-size: 11px; font-weight: 800; min-height: 44px; padding: 0 18px; }
+.run-all:hover, .lane-button:hover { border-color: #c7ff36; color: #c7ff36; }
+.run-all span { color: #c7ff36; margin-left: 8px; font-size: 14px; }
+
+.comparison { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid rgba(215, 239, 166, 0.18); }
+.lane { padding: 43px 36px 38px; min-height: 330px; }
+.main-lane { border-right: 1px solid rgba(215, 239, 166, 0.18); }
+.lane-header { display: flex; justify-content: space-between; align-items: flex-start; }
+.lane-number { color: #8b9a8d; margin-bottom: 10px; }
+.lane h2 { font-size: 30px; letter-spacing: -0.055em; margin-bottom: 0; }
+.lane-icon { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; font-size: 22px; }
+.blocked-icon { color: #ec8071; border: 1px solid #8d4f49; }
+.worker-icon { color: #c7ff36; border: 1px solid #77983c; box-shadow: inset 0 0 20px rgba(199, 255, 54, 0.13); }
+.lane-copy { color: #96a597; font-size: 14px; line-height: 1.6; max-width: 350px; min-height: 48px; margin: 32px 0 24px; }
+.meter { height: 5px; background: rgba(201, 226, 194, 0.13); overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: #ec8071; transition: width 150ms linear; }
+.worker-lane .meter span { background: #c7ff36; box-shadow: 0 0 18px rgba(199, 255, 54, 0.75); }
+.readout { display: flex; justify-content: space-between; align-items: baseline; margin: 14px 0 27px; color: #9bab9e; }
+.readout span:first-child { color: #f1f6eb; font-size: 20px; letter-spacing: -0.03em; }
+.readout span:last-child { font-size: 9px; }
+.lane-button { width: 100%; }
+.lane-button.primary { color: #07110f; background: #c7ff36; border-color: #c7ff36; }
+.lane-button.primary:hover { background: #e2ff8b; color: #07110f; }
+
+.result { display: flex; gap: 30px; align-items: baseline; padding: 29px 0; border-bottom: 1px solid rgba(215, 239, 166, 0.18); }
+.result-label { color: #7b8c7d; margin: 0; flex: 0 0 112px; }
+.result-text { color: #b9c8ba; font-size: 15px; margin: 0; }
+.result-text strong { color: #c7ff36; font-size: 21px; letter-spacing: -0.04em; }
+.result.warning .result-text { color: #f0b06c; }
+
+.anatomy { padding: 100px 0 118px; display: grid; grid-template-columns: 1fr 1fr; gap: 80px; }
+.anatomy h2 { color: #e8eee3; font-size: clamp(30px, 4vw, 49px); letter-spacing: -0.065em; line-height: 1.02; margin-bottom: 0; }
+.steps { margin: 0; padding: 0; list-style: none; border-top: 1px solid rgba(215, 239, 166, 0.18); }
+.steps li { padding: 18px 0; display: grid; grid-template-columns: 45px 1fr; gap: 15px; border-bottom: 1px solid rgba(215, 239, 166, 0.18); }
+.steps li > span { color: #c7ff36; font-family: "DM Mono", monospace; font-size: 11px; padding-top: 3px; }
+.steps p { margin: 0; color: #91a093; line-height: 1.55; font-size: 13px; }
+.steps strong { color: #eff6e9; display: block; font-size: 14px; }
+code { color: #c7ff36; font-family: "DM Mono", monospace; font-size: 11px; }
+footer { display: flex; justify-content: space-between; color: #687a6b; border-top: 1px solid rgba(215, 239, 166, 0.18); padding: 18px 0 26px; }
+
+@media (max-width: 680px) {
+  .shell { width: min(100% - 32px, 1180px); }
+  .masthead { min-height: 72px; }
+  .isolation-status { font-size: 9px; letter-spacing: 0.06em; }
+  .hero { padding: 70px 0 50px; }
+  .control-row, .result { align-items: flex-start; flex-direction: column; padding: 24px 0; gap: 20px; }
+  .run-all { width: 100%; }
+  .comparison, .anatomy { grid-template-columns: 1fr; gap: 0; }
+  .main-lane { border-right: 0; border-bottom: 1px solid rgba(215, 239, 166, 0.18); }
+  .lane { padding: 34px 0; min-height: 0; }
+  .anatomy { padding: 75px 0; gap: 48px; }
+  footer { font-size: 8px; letter-spacing: 0.08em; }
+}

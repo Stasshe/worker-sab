@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07110f" />
+    <title>Parallel / SAB</title>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="masthead">
+        <a class="mark" href="/" aria-label="Speed Lab home">
+          <span class="mark-dot"></span>
+          SPEED / LAB
+        </a>
+        <div class="isolation-status" id="isolation-status">
+          <span class="status-dot"></span>
+          <span>CHECKING MEMORY ACCESS</span>
+        </div>
+      </header>
+
+      <section class="hero" aria-labelledby="page-title">
+        <p class="eyebrow">A browser performance experiment</p>
+        <h1 id="page-title">Give the main thread<br /><em>its life back.</em></h1>
+        <p class="lede">
+          The same compute-heavy workload. One path blocks your interface. The other
+          shares its queue across CPU cores with Web Workers and SharedArrayBuffer.
+        </p>
+      </section>
+
+      <section class="control-row" aria-label="Experiment controls">
+        <div class="workload-control">
+          <span class="control-label">WORKLOAD</span>
+          <div class="range-line">
+            <input id="workload" type="range" min="0" max="2" value="1" step="1" />
+            <output id="workload-label" for="workload">144M OPS</output>
+          </div>
+        </div>
+        <button class="run-all" id="run-all" type="button">RUN THE COMPARISON <span>↗</span></button>
+      </section>
+
+      <section class="comparison" aria-label="Compute comparison">
+        <article class="lane main-lane">
+          <div class="lane-header">
+            <div>
+              <p class="lane-number">01 / BLOCKING</p>
+              <h2>Main thread</h2>
+            </div>
+            <div class="lane-icon blocked-icon" aria-hidden="true">∥</div>
+          </div>
+          <p class="lane-copy">One JavaScript loop owns the UI until every task is finished.</p>
+          <div class="meter" aria-hidden="true"><span id="main-meter"></span></div>
+          <div class="readout">
+            <span id="main-time">—</span>
+            <span id="main-state">READY</span>
+          </div>
+          <button class="lane-button" id="run-main" type="button">BLOCK THE INTERFACE</button>
+        </article>
+
+        <article class="lane worker-lane">
+          <div class="lane-header">
+            <div>
+              <p class="lane-number">02 / PARALLEL</p>
+              <h2>Workers + SAB</h2>
+            </div>
+            <div class="lane-icon worker-icon" aria-hidden="true">✳</div>
+          </div>
+          <p class="lane-copy">Workers atomically pull shared tasks. The UI keeps breathing.</p>
+          <div class="meter" aria-hidden="true"><span id="worker-meter"></span></div>
+          <div class="readout">
+            <span id="worker-time">—</span>
+            <span id="worker-state">READY</span>
+          </div>
+          <button class="lane-button primary" id="run-worker" type="button">RELEASE THE WORKERS</button>
+        </article>
+      </section>
+
+      <section class="result" id="result" aria-live="polite">
+        <p class="result-label">OBSERVATION</p>
+        <p class="result-text">Run both lanes to measure the difference on this device.</p>
+      </section>
+
+      <section class="anatomy" aria-label="How the worker path works">
+        <div class="anatomy-heading"><p class="eyebrow">The fast lane</p><h2>One shared memory map.<br />No copied task list.</h2></div>
+        <ol class="steps">
+          <li><span>01</span><p><strong>Shared queue</strong>Task cursor and output slots live inside a SharedArrayBuffer.</p></li>
+          <li><span>02</span><p><strong>Atomic claim</strong>Each Worker claims the next index with <code>Atomics.add()</code>.</p></li>
+          <li><span>03</span><p><strong>Free UI</strong>The main thread only paints progress while cores do the work.</p></li>
+        </ol>
+      </section>
+
+      <footer><span>WEB WORKERS × SHAREDARRAYBUFFER</span><span id="core-count">DETECTING CORES</span></footer>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
